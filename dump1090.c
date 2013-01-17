@@ -81,6 +81,7 @@
 #define MODES_INTERACTIVE_TTL 60                /* TTL before being removed */
 
 #define MODES_NET_MAX_FD 1024
+#define MODES_NET_OUTPUT_SBS_PORT 30003
 #define MODES_NET_OUTPUT_RAW_PORT 30002
 #define MODES_NET_INPUT_RAW_PORT 30001
 #define MODES_NET_HTTP_PORT 8080
@@ -144,6 +145,7 @@ struct {
     char aneterr[ANET_ERR_LEN];
     struct client *clients[MODES_NET_MAX_FD]; /* Our clients. */
     int maxfd;                      /* Greatest fd currently active. */
+    int sbsos;                        /* SBS output listening socket. */
     int ros;                        /* Raw output listening socket. */
     int ris;                        /* Raw input listening socket. */
     int https;                      /* HTTP listening socket. */
@@ -156,6 +158,7 @@ struct {
     int debug;                      /* Debugging mode. */
     int net;                        /* Enable networking. */
     int net_only;                   /* Enable just networking. */
+    int net_output_sbs_port;        /* SBS output TCP port. */
     int net_output_raw_port;        /* Raw output TCP port. */
     int net_input_raw_port;         /* Raw input TCP port. */
     int net_http_port;              /* HTTP port. */
@@ -180,6 +183,7 @@ struct {
     long long stat_single_bit_fix;
     long long stat_two_bits_fix;
     long long stat_http_requests;
+    long long stat_sbs_connections;
 } Modes;
 
 /* The struct we use to store information about a decoded message. */
@@ -227,8 +231,9 @@ struct modesMessage {
 };
 
 void interactiveShowData(void);
-void interactiveReceiveData(struct modesMessage *mm);
+struct aircraft* interactiveReceiveData(struct modesMessage *mm);
 void modesSendRawOutput(struct modesMessage *mm);
+void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a);
 void useModesMessage(struct modesMessage *mm);
 int fixSingleBitErrors(unsigned char *msg, int bits);
 int fixTwoBitsErrors(unsigned char *msg, int bits);
@@ -258,6 +263,7 @@ void modesInitConfig(void) {
     Modes.raw = 0;
     Modes.net = 0;
     Modes.net_only = 0;
+    Modes.net_output_sbs_port = MODES_NET_OUTPUT_SBS_PORT;
     Modes.net_output_raw_port = MODES_NET_OUTPUT_RAW_PORT;
     Modes.net_input_raw_port = MODES_NET_INPUT_RAW_PORT;
     Modes.net_http_port = MODES_NET_HTTP_PORT;
@@ -311,6 +317,7 @@ void modesInit(void) {
     Modes.stat_single_bit_fix = 0;
     Modes.stat_two_bits_fix = 0;
     Modes.stat_http_requests = 0;
+    Modes.stat_sbs_connections = 0;
     Modes.exit = 0;
 }
 
@@ -1336,11 +1343,13 @@ void detectModeS(uint16_t *m, uint32_t mlen) {
  * Basically this function passes a raw message to the upper layers for
  * further processing and visualization. */
 void useModesMessage(struct modesMessage *mm) {
+    struct aircraft *a;
     if (!Modes.stats && (Modes.check_crc == 0 || mm->crcok)) {
         /* Track aircrafts in interactive mode or if the HTTP
          * interface is enabled. */
-        if (Modes.interactive || Modes.stat_http_requests > 0) {
-            interactiveReceiveData(mm);
+        if (Modes.interactive || Modes.stat_http_requests > 0 || Modes.stat_sbs_connections > 0) {
+            a = interactiveReceiveData(mm);
+            if (a && Modes.stat_sbs_connections > 0) modesSendSBSOutput(mm, a);  /* Feed SBS output clients. */
         }
         /* In non-interactive way, display messages on standard output. */
         if (!Modes.interactive) {
@@ -1522,11 +1531,11 @@ void decodeCPR(struct aircraft *a) {
 }
 
 /* Receive new messages and populate the interactive mode with more info. */
-void interactiveReceiveData(struct modesMessage *mm) {
+struct aircraft *interactiveReceiveData(struct modesMessage *mm) {
     uint32_t addr;
     struct aircraft *a, *aux;
 
-    if (Modes.check_crc && mm->crcok == 0) return;
+    if (Modes.check_crc && mm->crcok == 0) return NULL;
     addr = (mm->aa1 << 16) | (mm->aa2 << 8) | mm->aa3;
 
     /* Loookup our aircraft or create a new one. */
@@ -1584,6 +1593,7 @@ void interactiveReceiveData(struct modesMessage *mm) {
             }
         }
     }
+return a;
 }
 
 /* Show the currently captured interactive data on screen. */
@@ -1684,17 +1694,18 @@ void modesInitNet(void) {
         char *descr;
         int *socket;
         int port;
-    } services[3] = {
+    } services[4] = {
         {"Raw TCP output", &Modes.ros, Modes.net_output_raw_port},
         {"Raw TCP input", &Modes.ris, Modes.net_input_raw_port},
-        {"HTTP server", &Modes.https, Modes.net_http_port}
+        {"HTTP server", &Modes.https, Modes.net_http_port},
+        {"Basestation TCP output", &Modes.sbsos, Modes.net_output_sbs_port}
     };
     int j;
 
     memset(Modes.clients,0,sizeof(Modes.clients));
     Modes.maxfd = -1;
 
-    for (j = 0; j < 3; j++) {
+    for (j = 0; j < 4; j++) {
         int s = anetTcpServer(Modes.aneterr, services[j].port, NULL);
         if (s == -1) {
             fprintf(stderr, "Error opening the listening port %d (%s): %s\n",
@@ -1715,11 +1726,12 @@ void modesAcceptClients(void) {
     int fd, port;
     unsigned int j;
     struct client *c;
-    int services[3];
+    int services[4];
 
     services[0] = Modes.ros;
     services[1] = Modes.ris;
     services[2] = Modes.https;
+    services[3] = Modes.sbsos;
 
     for (j = 0; j < sizeof(services)/sizeof(int); j++) {
         fd = anetTcpAccept(Modes.aneterr, services[j], NULL, &port);
@@ -1739,6 +1751,8 @@ void modesAcceptClients(void) {
         anetSetSendBuffer(Modes.aneterr,fd,MODES_NET_SNDBUF_SIZE);
 
         if (Modes.maxfd < fd) Modes.maxfd = fd;
+        if (j == 3) Modes.stat_sbs_connections++;
+
         j--; /* Try again with the same listening port. */
 
         if (Modes.debug == MODES_DEBUG_NET)
@@ -1796,6 +1810,46 @@ void modesSendRawOutput(struct modesMessage *mm) {
     *p++ = ';';
     *p++ = '\n';
     modesSendAllClients(Modes.ros, msg, p-msg);
+}
+
+
+/* Write SBS output to TCP clients. */
+void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
+    char msg[256], *p = msg;
+    struct tm *tmp;
+    time_t t;
+    int sbstype = -1;
+
+    if (mm->msgtype == 17) {
+        if (mm->metype >= 1 && mm->metype <= 4) {
+            /* Aircraft Identification and Category */
+            sbstype = 8;
+        } else if (mm->metype >= 9 && mm->metype <= 18) {
+            /* Airborne position Message */
+            sbstype = 3;
+        } else if (mm->metype == 19 && mm->mesub >= 1 && mm->mesub <= 4) {
+            /* Airborne Velocity Message */
+            sbstype = 4;
+        }
+    }
+if (sbstype == -1) return;
+
+    p += sprintf(p, "MSG,%d,111,11111,%02X%02X%02X,111111,", sbstype, mm->aa1, mm->aa2, mm->aa3);
+
+    t = time(NULL);
+    tmp = localtime(&t);
+    p += strftime(p, 50, "%Y/%m/%d,%H:%M:%S.000,%Y/%m/%d,%H:%M:%S.000,,", tmp);
+    p += sprintf(p, "%d,", mm->altitude);
+    p += sprintf(p, ","); // ground speed
+    p += (mm->mesub == 3 || mm->mesub == 4) && mm->heading_is_valid ? sprintf(p, "%d,", mm->heading) : sprintf(p, ","); // "Track of aircraft (not heading). Derived from the velocity E/W and velocity N/S" FIXME
+
+    p += sprintf(p, "%f,%f,", a->lat, a->lon); // Lat, Lon
+    p += sprintf(p, ",,0,"); // VerticalRate, Squawk, Alert (Squawk Change)
+    p += sprintf(p, "%d,0,%d", mm->fs>=2 && mm->fs<=4 ? 1 : 0, mm->fs==1 || mm->fs==3 ? 1 : 0); // Emergency, SPI, IsOnGround
+
+    *p++ = '\n';
+
+    modesSendAllClients(Modes.sbsos, msg, p-msg);
 }
 
 /* Turn an hex digit into its 4 bit decimal value.
@@ -2099,6 +2153,7 @@ void showHelp(void) {
 "--net-ro-port <port>     TCP listening port for raw output (default: 30002).\n"
 "--net-ri-port <port>     TCP listening port for raw input (default: 30001).\n"
 "--net-http-port <port>   HTTP server port (default: 8080).\n"
+"--net-sbs-port <port>    TCP listening port for BaseStation format output (default: 30003).\n"
 "--no-fix                 Disable single-bits error correction using CRC.\n"
 "--no-crc-check           Disable messages with broken CRC (discouraged).\n"
 "--aggressive             More CPU for more messages (two bits fixes, ...).\n"
@@ -2168,6 +2223,8 @@ int main(int argc, char **argv) {
             Modes.net_input_raw_port = atoi(argv[++j]);
         } else if (!strcmp(argv[j],"--net-http-port") && more) {
             Modes.net_http_port = atoi(argv[++j]);
+        } else if (!strcmp(argv[j],"--net-sbs-port") && more) {
+            Modes.net_output_sbs_port = atoi(argv[++j]);
         } else if (!strcmp(argv[j],"--onlyaddr")) {
             Modes.onlyaddr = 1;
         } else if (!strcmp(argv[j],"--metric")) {
