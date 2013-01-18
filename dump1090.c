@@ -1834,6 +1834,8 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
         p += sprintf(p, "MSG,5,,,%02X%02X%02X,,,,,,,%d,,,,,,,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->altitude, alert, emergency, spi, ground);
     } else if (mm->msgtype == 5) {
         p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%04o,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
+    } else if (mm->msgtype == 11) {
+        p += sprintf(p, "MSG,8,,,%02X%02X%02X,,,,,,,,,,,,,,,,,", mm->aa1, mm->aa2, mm->aa3);
     } else if (mm->msgtype == 17 && mm->metype == 4) {
         p += sprintf(p, "MSG,1,,,%02X%02X%02X,,,,,,%s,,,,,,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->flight);
     } else if (mm->msgtype == 17 && mm->metype >= 9 && mm->metype <= 18) {
