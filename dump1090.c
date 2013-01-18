@@ -914,7 +914,10 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
     mm->dr = msg[1] >> 3 & 31;  /* Request extraction of downlink request. */
     mm->um = ((msg[1] & 7)<<3)| /* Request extraction of downlink request. */
               msg[2]>>5;
-    mm->identity = (msg[2]&31 << 8) | msg[3]; /* 13 bits identity. */
+    mm->identity = (((msg[3] >> 7) & 0x01) << 11) | (((msg[2] >> 1) & 0x01) << 10) | (((msg[2] >> 3) & 0x01) << 9) |
+    (((msg[3] >> 1) & 0x01) << 8) | (((msg[3] >> 3) & 0x01) << 7) | (((msg[3] >> 5) & 0x01) << 6) |
+    ((msg[2] & 0x01) << 5) | (((msg[2] >> 2) & 0x01) << 4) | (((msg[2] >> 4) & 0x01) << 3) |
+    ((msg[3] & 0x01) << 2) | (((msg[3] >> 2) & 0x01) << 1) | (((msg[3] >> 4) & 0x01)); /* 13 bits identity. */ /* calculation from ADSBox */
 
     /* Check if we can check the checksum for the Downlink Formats where
      * the checksum is xored with the aircraft ICAO address. We try to
