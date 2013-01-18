@@ -1816,36 +1816,33 @@ void modesSendRawOutput(struct modesMessage *mm) {
 /* Write SBS output to TCP clients. */
 void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
     char msg[256], *p = msg;
-    struct tm *tmp;
-    time_t t;
-    int sbstype = -1;
+    int emergency = 0, ground = 0, alert = 0, spi = 0;
 
-    if (mm->msgtype == 17) {
-        if (mm->metype >= 1 && mm->metype <= 4) {
-            /* Aircraft Identification and Category */
-            sbstype = 8;
-        } else if (mm->metype >= 9 && mm->metype <= 18) {
-            /* Airborne position Message */
-            sbstype = 3;
-        } else if (mm->metype == 19 && mm->mesub >= 1 && mm->mesub <= 4) {
-            /* Airborne Velocity Message */
-            sbstype = 4;
+    if (mm->msgtype == 4 || mm->msgtype == 5 || mm->msgtype == 21) {
+            if (mm->identity == 07500 || mm->identity == 07600 || mm->identity == 07700) emergency = -1;
+            if (mm->fs == 1 || mm->fs == 3) ground = -1;
+            if (mm->fs == 2 || mm->fs == 3 || mm->fs == 4) alert = -1;
+            if (mm->fs == 4 || mm->fs == 5) spi = -1;
         }
+
+    if (mm->msgtype == 0) {
+        p += sprintf(p, "MSG,5,,,%02X%02X%02X,,,,,,,%d,,,,,,,,,,", mm->aa1, mm->aa2, mm->aa3, mm->altitude);
+    } else if (mm->msgtype == 4) {
+        p += sprintf(p, "MSG,5,,,%02X%02X%02X,,,,,,,%d,,,,,,,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->altitude, alert, emergency, spi, ground);
+    } else if (mm->msgtype == 5) {
+        p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%04o,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
+    } else if (mm->msgtype == 17 && mm->metype == 4) {
+        p += sprintf(p, "MSG,1,,,%02X%02X%02X,,,,,,%s,,,,,,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->flight);
+    } else if (mm->msgtype == 17 && mm->metype >= 9 && mm->metype <= 18) {
+        p += sprintf(p, "MSG,3,,,%02X%02X%02X,,,,,,,%d,,,%1.5f,%1.5f,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->altitude, a->lat, a->lon);
+    } else if (mm->msgtype == 17 && mm->metype == 19 && mm->mesub == 1) {
+        int vr = (mm->vert_rate_sign==0?1:-1) * (mm->vert_rate-1) * 64;
+        p += sprintf(p, "MSG,4,,,%02X%02X%02X,,,,,,,,%d,%d,,,%i,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, a->speed, a->track, vr);
+    } else if (mm->msgtype == 21) {
+        p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%04o,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
     }
-if (sbstype == -1) return;
 
-    p += sprintf(p, "MSG,%d,111,11111,%02X%02X%02X,111111,", sbstype, mm->aa1, mm->aa2, mm->aa3);
-
-    t = time(NULL);
-    tmp = localtime(&t);
-    p += strftime(p, 50, "%Y/%m/%d,%H:%M:%S.000,%Y/%m/%d,%H:%M:%S.000,,", tmp);
-    p += sprintf(p, "%d,", mm->altitude);
-    p += sprintf(p, ","); // ground speed
-    p += (mm->mesub == 3 || mm->mesub == 4) && mm->heading_is_valid ? sprintf(p, "%d,", mm->heading) : sprintf(p, ","); // "Track of aircraft (not heading). Derived from the velocity E/W and velocity N/S" FIXME
-
-    p += sprintf(p, "%f,%f,", a->lat, a->lon); // Lat, Lon
-    p += sprintf(p, ",,0,"); // VerticalRate, Squawk, Alert (Squawk Change)
-    p += sprintf(p, "%d,0,%d", mm->fs>=2 && mm->fs<=4 ? 1 : 0, mm->fs==1 || mm->fs==3 ? 1 : 0); // Emergency, SPI, IsOnGround
+    if (msg == p) return; // empty string
 
     *p++ = '\n';
 
