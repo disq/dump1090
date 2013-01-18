@@ -1838,7 +1838,10 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
     } else if (mm->msgtype == 17 && mm->metype == 4) {
         p += sprintf(p, "MSG,1,,,%02X%02X%02X,,,,,,%s,,,,,,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->flight);
     } else if (mm->msgtype == 17 && mm->metype >= 9 && mm->metype <= 18) {
-        p += sprintf(p, "MSG,3,,,%02X%02X%02X,,,,,,,%d,,,%1.5f,%1.5f,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->altitude, a->lat, a->lon);
+        if (a->lat == 0 && a->lon == 0)
+            p += sprintf(p, "MSG,3,,,%02X%02X%02X,,,,,,,%d,,,,,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->altitude);
+        else
+            p += sprintf(p, "MSG,3,,,%02X%02X%02X,,,,,,,%d,,,%1.5f,%1.5f,,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, mm->altitude, a->lat, a->lon);
     } else if (mm->msgtype == 17 && mm->metype == 19 && mm->mesub == 1) {
         int vr = (mm->vert_rate_sign==0?1:-1) * (mm->vert_rate-1) * 64;
         p += sprintf(p, "MSG,4,,,%02X%02X%02X,,,,,,,,%d,%d,,,%i,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, a->speed, a->track, vr);
