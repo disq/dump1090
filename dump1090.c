@@ -973,7 +973,8 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
             mm->altitude = decodeAC12Field(msg,&mm->unit);
             mm->raw_latitude = ((msg[6] & 3) << 15) |
                                 (msg[7] << 7) |
-                                (msg[8] >> 1);
+                                ((msg[8] >> 1) & 0x7f);
+
             mm->raw_longitude = ((msg[8]&1) << 16) |
                                  (msg[9] << 8) |
                                  msg[10];

@@ -8,4 +8,3 @@ TODO
   aircraft ICAO address, like: 30xxxx -> Italy.
 * Actually use the fancy --debug feature in order to improve the recognition
   algorithm if possibile.
-* Fix latitude calculation (looks like it's off)
