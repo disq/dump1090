@@ -145,7 +145,7 @@ struct {
     char aneterr[ANET_ERR_LEN];
     struct client *clients[MODES_NET_MAX_FD]; /* Our clients. */
     int maxfd;                      /* Greatest fd currently active. */
-    int sbsos;                        /* SBS output listening socket. */
+    int sbsos;                      /* SBS output listening socket. */
     int ros;                        /* Raw output listening socket. */
     int ris;                        /* Raw input listening socket. */
     int https;                      /* HTTP listening socket. */
@@ -1378,7 +1378,7 @@ void useModesMessage(struct modesMessage *mm) {
         /* Track aircrafts in interactive mode or if the HTTP
          * interface is enabled. */
         if (Modes.interactive || Modes.stat_http_requests > 0 || Modes.stat_sbs_connections > 0) {
-            a = interactiveReceiveData(mm);
+            struct aircraft *a = interactiveReceiveData(mm);
             if (a && Modes.stat_sbs_connections > 0) modesSendSBSOutput(mm, a);  /* Feed SBS output clients. */
         }
         /* In non-interactive way, display messages on standard output. */
@@ -1624,7 +1624,7 @@ struct aircraft *interactiveReceiveData(struct modesMessage *mm) {
             }
         }
     }
-return a;
+    return a;
 }
 
 /* Show the currently captured interactive data on screen. */
@@ -1782,7 +1782,7 @@ void modesAcceptClients(void) {
         anetSetSendBuffer(Modes.aneterr,fd,MODES_NET_SNDBUF_SIZE);
 
         if (Modes.maxfd < fd) Modes.maxfd = fd;
-        if (j == 3) Modes.stat_sbs_connections++;
+        if (services[j] == Modes.sbsos) Modes.stat_sbs_connections++;
 
         j--; /* Try again with the same listening port. */
 
