@@ -115,7 +115,7 @@ struct aircraft {
     int even_cprlat;
     int even_cprlon;
     double lat, lon;    /* Coordinated obtained from CPR encoded data. */
-    time_t odd_cprtime, even_cprtime;
+    long long odd_cprtime, even_cprtime;
     struct aircraft *next; /* Next aircraft in our linked list. */
 };
 
@@ -705,15 +705,18 @@ int ICAOAddressWasRecentlySeen(uint32_t addr) {
  * the address XOR checksum field in the message. This will recover the
  * address: if we found it in our cache, we can assume the message is ok.
  *
- * On success the input buffer is modified to remove the xored checksum
- * from the packet, so that the last three bytes will contain the
- * plain ICAO address.
+ * This function expects mm->msgtype and mm->msgbits to be correctly
+ * populated by the caller.
+ *
+ * On success the correct ICAO address is stored in the modesMessage
+ * structure in the aa3, aa2, and aa1 fiedls.
  *
  * If the function successfully recovers a message with a correct checksum
  * it returns 1. Otherwise 0 is returned. */
-int bruteForceAP(unsigned char *msg, int msgbits) {
-    unsigned char aux[MODES_LONG_MSG_BITS/8];
-    int msgtype = msg[0]>>3;
+int bruteForceAP(unsigned char *msg, struct modesMessage *mm) {
+    unsigned char aux[MODES_LONG_MSG_BYTES];
+    int msgtype = mm->msgtype;
+    int msgbits = mm->msgbits;
 
     if (msgtype == 0 ||         /* Short air surveillance */
         msgtype == 4 ||         /* Surveillance, altitude reply */
@@ -743,9 +746,9 @@ int bruteForceAP(unsigned char *msg, int msgbits) {
          * the message valid. */
         addr = aux[lastbyte] | (aux[lastbyte-1] << 8) | (aux[lastbyte-2] << 16);
         if (ICAOAddressWasRecentlySeen(addr)) {
-            msg[lastbyte] = aux[lastbyte];
-            msg[lastbyte-1] = aux[lastbyte-1];
-            msg[lastbyte-2] = aux[lastbyte-2];
+            mm->aa1 = aux[lastbyte-2];
+            mm->aa2 = aux[lastbyte-1];
+            mm->aa3 = aux[lastbyte];
             return 1;
         }
     }
@@ -914,34 +917,58 @@ void decodeModesMessage(struct modesMessage *mm, unsigned char *msg) {
     mm->dr = msg[1] >> 3 & 31;  /* Request extraction of downlink request. */
     mm->um = ((msg[1] & 7)<<3)| /* Request extraction of downlink request. */
               msg[2]>>5;
-    mm->identity = (((msg[3] >> 7) & 0x01) << 11) | (((msg[2] >> 1) & 0x01) << 10) | (((msg[2] >> 3) & 0x01) << 9) |
-    (((msg[3] >> 1) & 0x01) << 8) | (((msg[3] >> 3) & 0x01) << 7) | (((msg[3] >> 5) & 0x01) << 6) |
-    ((msg[2] & 0x01) << 5) | (((msg[2] >> 2) & 0x01) << 4) | (((msg[2] >> 4) & 0x01) << 3) |
-    ((msg[3] & 0x01) << 2) | (((msg[3] >> 2) & 0x01) << 1) | (((msg[3] >> 4) & 0x01)); /* 13 bits identity. */ /* calculation from ADSBox */
 
-    /* Check if we can check the checksum for the Downlink Formats where
-     * the checksum is xored with the aircraft ICAO address. We try to
-     * brute force it using a list of recently seen aircraft addresses. */
+    /* In the squawk (identity) field bits are interleaved like that
+     * (message bit 20 to bit 32):
+     *
+     * C1-A1-C2-A2-C4-A4-ZERO-B1-D1-B2-D2-B4-D4
+     *
+     * So every group of three bits A, B, C, D represent an integer
+     * from 0 to 7.
+     *
+     * The actual meaning is just 4 octal numbers, but we convert it
+     * into a base ten number tha happens to represent the four
+     * octal numbers.
+     *
+     * For more info: http://en.wikipedia.org/wiki/Gillham_code */
+    {
+        int a,b,c,d;
+
+        a = ((msg[3] & 0x80) >> 5) |
+            ((msg[2] & 0x02) >> 0) |
+            ((msg[2] & 0x08) >> 3);
+        b = ((msg[3] & 0x02) << 1) |
+            ((msg[3] & 0x08) >> 2) |
+            ((msg[3] & 0x20) >> 5);
+        c = ((msg[2] & 0x01) << 2) |
+            ((msg[2] & 0x04) >> 1) |
+            ((msg[2] & 0x10) >> 4);
+        d = ((msg[3] & 0x01) << 2) |
+            ((msg[3] & 0x04) >> 1) |
+            ((msg[3] & 0x10) >> 4);
+        mm->identity = a*1000 + b*100 + c*10 + d;
+    }
+
+    /* DF 11 & 17: try to populate our ICAO addresses whitelist.
+     * DFs with an AP field (xored addr and crc), try to decode it. */
     if (mm->msgtype != 11 && mm->msgtype != 17) {
-        /* Return to the caller now if we can't resolve the API field and
-         * we need to check the checksum. */
-        if (bruteForceAP(msg,mm->msgbits)) {
-            /* We recovered the message!
-             * Populate the AA fields with the right information. */
-            mm->aa3 = msg[mm->msgbits/8-1];
-            mm->aa2 = msg[mm->msgbits/8-2];
-            mm->aa1 = msg[mm->msgbits/8-3];
+        /* Check if we can check the checksum for the Downlink Formats where
+         * the checksum is xored with the aircraft ICAO address. We try to
+         * brute force it using a list of recently seen aircraft addresses. */
+        if (bruteForceAP(msg,mm)) {
+            /* We recovered the message, mark the checksum as valid. */
             mm->crcok = 1;
         } else {
             mm->crcok = 0;
         }
-    }
-    /* If this is DF 11 or DF 17 and the checksum was ok,
-     * we can add this address to the list of recently seen
-     * addresses. */
-    if (mm->crcok && mm->errorbit == -1) {
-        uint32_t addr = (mm->aa1 << 16) | (mm->aa2 << 8) | mm->aa3;
-        addRecentlySeenICAOAddr(addr);
+    } else {
+        /* If this is DF 11 or DF 17 and the checksum was ok,
+         * we can add this address to the list of recently seen
+         * addresses. */
+        if (mm->crcok && mm->errorbit == -1) {
+            uint32_t addr = (mm->aa1 << 16) | (mm->aa2 << 8) | mm->aa3;
+            addRecentlySeenICAOAddr(addr);
+        }
     }
 
     /* Decode 13 bit altitude for DF0, DF4, DF16, DF20 */
@@ -1066,7 +1093,7 @@ void displayModesMessage(struct modesMessage *mm) {
         printf("  Flight Status  : %s\n", fs_str[mm->fs]);
         printf("  DR             : %d\n", mm->dr);
         printf("  UM             : %d\n", mm->um);
-        printf("  Squawk         : %o (octal)\n", mm->identity);
+        printf("  Squawk         : %d\n", mm->identity);
         printf("  ICAO Address   : %02x%02x%02x\n", mm->aa1, mm->aa2, mm->aa3);
 
         if (mm->msgtype == 21) {
@@ -1475,14 +1502,14 @@ int cprNLFunction(double lat) {
     else return 1;
 }
 
-int cprNFunction(int i, int isodd) {
-    int nl = cprNLFunction(i) - isodd;
+int cprNFunction(double lat, int isodd) {
+    int nl = cprNLFunction(lat) - isodd;
     if (nl < 1) nl = 1;
     return nl;
 }
 
-double cprDlonFunction(int i, int isodd) {
-    return 360.0 / cprNFunction(i, isodd);
+double cprDlonFunction(double lat, int isodd) {
+    return 360.0 / cprNFunction(lat, isodd);
 }
 
 /* This algorithm comes from:
@@ -1579,16 +1606,17 @@ struct aircraft *interactiveReceiveData(struct modesMessage *mm) {
             if (mm->fflag) {
                 a->odd_cprlat = mm->raw_latitude;
                 a->odd_cprlon = mm->raw_longitude;
-                a->odd_cprtime = a->seen; /* Current time. */
+                a->odd_cprtime = mstime();
             } else {
                 a->even_cprlat = mm->raw_latitude;
                 a->even_cprlon = mm->raw_longitude;
-                a->even_cprtime = a->seen; /* Current time. */
+                a->even_cprtime = mstime();
             }
             /* If the two data is less than 10 seconds apart, compute
              * the position. */
-            if (abs(a->even_cprtime - a->odd_cprtime) <= 10)
+            if (abs(a->even_cprtime - a->odd_cprtime) <= 10000) {
                 decodeCPR(a);
+            }
         } else if (mm->metype == 19) {
             if (mm->mesub == 1 || mm->mesub == 2) {
                 a->speed = mm->velocity;
