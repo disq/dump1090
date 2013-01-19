@@ -1850,7 +1850,7 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
     int emergency = 0, ground = 0, alert = 0, spi = 0;
 
     if (mm->msgtype == 4 || mm->msgtype == 5 || mm->msgtype == 21) {
-            if (mm->identity == 07500 || mm->identity == 07600 || mm->identity == 07700) emergency = -1;
+            if (mm->identity == 7500 || mm->identity == 7600 || mm->identity == 7700) emergency = -1; /* identity is calculated/kept in base10 but is actually octal (07500 is represented as 7500) */
             if (mm->fs == 1 || mm->fs == 3) ground = -1;
             if (mm->fs == 2 || mm->fs == 3 || mm->fs == 4) alert = -1;
             if (mm->fs == 4 || mm->fs == 5) spi = -1;
@@ -1861,7 +1861,7 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
     } else if (mm->msgtype == 4) {
         p += sprintf(p, "MSG,5,,,%02X%02X%02X,,,,,,,%d,,,,,,,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->altitude, alert, emergency, spi, ground);
     } else if (mm->msgtype == 5) {
-        p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%04o,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
+        p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%d,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
     } else if (mm->msgtype == 11) {
         p += sprintf(p, "MSG,8,,,%02X%02X%02X,,,,,,,,,,,,,,,,,", mm->aa1, mm->aa2, mm->aa3);
     } else if (mm->msgtype == 17 && mm->metype == 4) {
@@ -1875,7 +1875,7 @@ void modesSendSBSOutput(struct modesMessage *mm, struct aircraft *a) {
         int vr = (mm->vert_rate_sign==0?1:-1) * (mm->vert_rate-1) * 64;
         p += sprintf(p, "MSG,4,,,%02X%02X%02X,,,,,,,,%d,%d,,,%i,,0,0,0,0", mm->aa1, mm->aa2, mm->aa3, a->speed, a->track, vr);
     } else if (mm->msgtype == 21) {
-        p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%04o,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
+        p += sprintf(p, "MSG,6,,,%02X%02X%02X,,,,,,,,,,,,,%d,%d,%d,%d,%d", mm->aa1, mm->aa2, mm->aa3, mm->identity, alert, emergency, spi, ground);
     }
 
     if (msg == p) return; // empty string
